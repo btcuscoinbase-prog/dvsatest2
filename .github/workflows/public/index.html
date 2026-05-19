@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DVSA London Slot Monitor - Real-time</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #f3f2f1; padding: 20px; }
+        .container { max-width: 1300px; margin: auto; }
+        .header { background: linear-gradient(135deg, #005ea5 0%, #003d6b 100%); color: white; padding: 25px; border-radius: 16px; margin-bottom: 20px; text-align: center; }
+        .last-update { font-size: 12px; margin-top: 8px; opacity: 0.9; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .stat-card { background: white; border-radius: 12px; padding: 18px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .stat-value { font-size: 32px; font-weight: bold; color: #005ea5; }
+        .stat-label { font-size: 12px; color: #666; margin-top: 5px; }
+        .controls { text-align: center; margin-bottom: 25px; }
+        .btn { padding: 12px 28px; background: #00703c; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; }
+        .btn:hover { background: #004d29; transform: translateY(-1px); }
+        .centres-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
+        .centre-card { background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: transform 0.2s; }
+        .centre-card:hover { transform: translateY(-2px); }
+        .centre-card.has-slots { border-left: 4px solid #00703c; }
+        .centre-header { padding: 15px; background: #f8f9fa; display: flex; justify-content: space-between; align-items: center; }
+        .centre-name { font-weight: bold; font-size: 16px; }
+        .slot-badge { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: bold; }
+        .slot-badge.available { background: #00703c; color: white; animation: pulse 1s infinite; }
+        .slot-badge.unavailable { background: #6f777b; color: white; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .centre-body { padding: 15px; }
+        .centre-address { font-size: 12px; color: #666; margin-bottom: 10px; }
+        .dates-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+        .date-chip { background: #e6f4ea; color: #00703c; padding: 5px 12px; border-radius: 20px; font-size: 11px; cursor: pointer; transition: all 0.2s; }
+        .date-chip:hover { background: #00703c; color: white; }
+        .last-check { font-size: 10px; color: #999; margin-top: 12px; text-align: right; }
+        .auto-refresh { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .loading { text-align: center; padding: 40px; color: #666; }
+        @media (max-width: 700px) {
+            .centres-grid { grid-template-columns: 1fr; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚗 DVSA London Slot Monitor</h1>
+            <p>Live | 9 London Centres | Auto-scan every 5 minutes</p>
+            <div class="last-update" id="lastUpdate">Loading data...</div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card"><div class="stat-value" id="totalCentres">0</div><div class="stat-label">Monitored Centres</div></div>
+            <div class="stat-card"><div class="stat-value" id="centresWithSlots">0</div><div class="stat-label">With Available Slots</div></div>
+            <div class="stat-card"><div class="stat-value" id="totalSlots">0</div><div class="stat-label">Total Slots Found</div></div>
+            <div class="stat-card"><div class="stat-value" id="nextScan">--</div><div class="stat-label">Next Auto-Scan</div></div>
+        </div>
+
+        <div class="controls">
+            <button class="btn" id="refreshBtn">🔄 Refresh Now</button>
+        </div>
+
+        <div id="centresGrid" class="centres-grid">
+            <div class="loading">Loading centres...</div>
+        </div>
+
+        <div class="auto-refresh" id="autoRefreshNote">
+            ⏰ Auto-refreshes every 30 seconds | Data updates every 5 minutes
+        </div>
+    </div>
+
+    <script>
+        let nextScanTime = null;
+        
+        function updateNextScan() {
+            if (!nextScanTime) {
+                const now = new Date();
+                const minutes = now.getMinutes();
+                const nextMinutes = Math.ceil(minutes / 5) * 5;
+                nextScanTime = new Date(now);
+                nextScanTime.setMinutes(nextMinutes);
+                nextScanTime.setSeconds(0);
+                if (nextScanTime <= now) {
+                    nextScanTime.setMinutes(nextMinutes + 5);
+                }
+            }
+            const now = new Date();
+            if (now >= nextScanTime) {
+                nextScanTime.setMinutes(nextScanTime.getMinutes() + 5);
+            }
+            const diff = Math.max(0, Math.floor((nextScanTime - now) / 1000));
+            const mins = Math.floor(diff / 60);
+            const secs = diff % 60;
+            document.getElementById('nextScan').innerHTML = `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        async function loadData() {
+            try {
+                const res = await fetch('data.json?v=' + Date.now());
+                const data = await res.json();
+                
+                document.getElementById('totalCentres').textContent = data.summary.totalCentres || 9;
+                document.getElementById('centresWithSlots').textContent = data.summary.centresWithSlots || 0;
+                document.getElementById('totalSlots').textContent = data.summary.totalSlots || 0;
+                document.getElementById('lastUpdate').innerHTML = `Last updated: ${new Date(data.timestamp).toLocaleString()}`;
+                
+                if (data.summary.lastScanTime) {
+                    const lastScan = new Date(data.summary.lastScanTime);
+                    nextScanTime = new Date(lastScan);
+                    nextScanTime.setMinutes(lastScan.getMinutes() + 5);
+                }
+                
+                const grid = document.getElementById('centresGrid');
+                grid.innerHTML = '';
+                
+                if (data.centres && data.centres.length) {
+                    data.centres.forEach(centre => {
+                        const hasSlots = centre.hasSlots || false;
+                        const slotCount = centre.slotCount || 0;
+                        const dates = centre.availableDates || [];
+                        
+                        const card = document.createElement('div');
+                        card.className = `centre-card ${hasSlots ? 'has-slots' : ''}`;
+                        card.innerHTML = `
+                            <div class="centre-header">
+                                <span class="centre-name">📍 ${centre.name}</span>
+                                <span class="slot-badge ${hasSlots ? 'available' : 'unavailable'}">
+                                    ${hasSlots ? `✅ ${slotCount} slots` : '❌ No slots'}
+                                </span>
+                            </div>
+                            <div class="centre-body">
+                                <div class="centre-address">${centre.address}</div>
+                                ${dates.length ? `
+                                    <div class="dates-list">
+                                        ${dates.slice(0, 8).map(d => `
+                                            <span class="date-chip" onclick="window.open('https://driverpracticaltest.dvsa.gov.uk/booking?centreCode=${centre.code}', '_blank')">
+                                                📅 ${d}
+                                            </span>
+                                        `).join('')}
+                                    </div>
+                                ` : '<div style="color:#999; font-size:12px;">No available dates at this time</div>'}
+                                <div class="last-check">Checked: ${new Date(centre.lastChecked).toLocaleTimeString()}</div>
+                            </div>
+                        `;
+                        grid.appendChild(card);
+                    });
+                } else {
+                    grid.innerHTML = '<div class="loading">⏳ Waiting for first scan. Data will appear soon.</div>';
+                }
+            } catch(e) {
+                console.error('Error:', e);
+                document.getElementById('centresGrid').innerHTML = '<div class="loading">⚠️ No data yet. First scan will run within 5 minutes.</div>';
+            }
+        }
+        
+        document.getElementById('refreshBtn').onclick = loadData;
+        
+        loadData();
+        setInterval(() => { loadData(); updateNextScan(); }, 30000);
+        setInterval(updateNextScan, 1000);
+        updateNextScan();
+        
+        // Play sound when slots found
+        async function checkAndNotify() {
+            try {
+                const res = await fetch('data.json?v=' + Date.now());
+                const data = await res.json();
+                const slotsFound = data.summary?.centresWithSlots || 0;
+                const previousSlots = localStorage.getItem('dvsa_previous_slots');
+                if (slotsFound > 0 && previousSlots != slotsFound) {
+                    // New slots found!
+                    try {
+                        const audio = new Audio('https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3');
+                        audio.play().catch(() => {});
+                    } catch(e) {}
+                    localStorage.setItem('dvsa_previous_slots', slotsFound);
+                }
+            } catch(e) {}
+        }
+        setInterval(checkAndNotify, 60000);
+    </script>
+</body>
+</html>
