@@ -1,0 +1,40 @@
+name: DVSA Slot Scanner
+
+on:
+  schedule:
+    # Runs every 5 minutes (safe limit, won't get blocked)
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    
+    - name: Install dependencies
+      run: npm install
+    
+    - name: Create cookie file
+      run: |
+        if [ -n "${{ secrets.DVSA_COOKIE }}" ]; then
+          echo "${{ secrets.DVSA_COOKIE }}" > cookie.txt
+        fi
+    
+    - name: Run scanner
+      run: node server.js
+    
+    - name: Commit results
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add public/data.json
+        git diff --staged --quiet || git commit -m "Auto-scan results [skip ci]"
+        git push || true
